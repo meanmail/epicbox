@@ -231,12 +231,12 @@ def docker_communicate(container, stdin=None, start_container=True,
             log.debug("There is no input data. Shut down the write half "
                       "of the socket.")
             sock._sock.shutdown(socket.SHUT_WR)
+        deadline = time.monotonic() + timeout
         if start_container:
             container.start()
             log.info("Container started")
 
         stream_data = b''
-        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             wait_timeout = min(1, max(0, deadline - time.monotonic()))
             writers = [sock] if stdin else []
@@ -271,6 +271,8 @@ def docker_communicate(container, stdin=None, start_container=True,
                     sock._sock.shutdown(socket.SHUT_WR)
 
         else:
+            raise TimeoutError("Container didn't terminate after timeout seconds")
+        if time.monotonic() >= deadline:
             raise TimeoutError("Container didn't terminate after timeout seconds")
         return demultiplex_docker_stream(stream_data)
 

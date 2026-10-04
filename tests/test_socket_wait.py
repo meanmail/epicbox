@@ -99,6 +99,45 @@ class SocketWaitTests(unittest.TestCase):
                 utils.docker_communicate(MagicMock())
         self.assertFalse(create_client.called)
 
+    def test_start_delay_consumes_realtime_budget(self):
+        sock = MagicMock()
+        client = MagicMock()
+        client.api.attach_socket.return_value = sock
+        clock = [0]
+        container = MagicMock()
+
+        def start():
+            clock[0] += 2
+
+        container.start.side_effect = start
+        with patch.object(utils, 'get_docker_client', return_value=client), \
+                patch.object(utils.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(utils.select, 'select',
+                             return_value=([sock], [], [])), \
+                patch.object(utils, '_socket_read', return_value=None):
+            with self.assertRaises(TimeoutError):
+                utils.docker_communicate(container, timeout=1)
+        sock.close.assert_called_once_with()
+
+    def test_late_eof_cannot_report_success(self):
+        sock = MagicMock()
+        client = MagicMock()
+        client.api.attach_socket.return_value = sock
+        clock = [0]
+
+        def read(sock):
+            clock[0] = 2
+            return None
+
+        with patch.object(utils, 'get_docker_client', return_value=client), \
+                patch.object(utils.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(utils.select, 'select',
+                             return_value=([sock], [], [])), \
+                patch.object(utils, '_socket_read', side_effect=read):
+            with self.assertRaises(TimeoutError):
+                utils.docker_communicate(MagicMock(), timeout=1)
+        sock.close.assert_called_once_with()
+
 
 @pytest.mark.parametrize('command', [
     'sleep 30',
