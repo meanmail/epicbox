@@ -121,3 +121,41 @@ class DockerResponseCleanupTests(unittest.TestCase):
 
         self.assertIs(raised.exception, error)
         self.assertTrue(self.sock.closed)
+
+    def test_socket_setup_error_closes_response(self):
+        error = OSError('Setup failed')
+        with patch.object(socket.socket, 'setblocking', side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                utils.docker_communicate(MagicMock())
+        self.assertIs(raised.exception, error)
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_write_error_closes_response(self):
+        error = OSError('Write failed')
+        with patch.object(utils.select, 'select',
+                          return_value=([self.sock], [self.sock], [])), \
+                patch.object(utils, '_socket_write', side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                utils.docker_communicate(MagicMock(), stdin=b'input')
+        self.assertIs(raised.exception, error)
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_broken_pipe_preserves_output_and_closes_response(self):
+        with patch.object(utils.select, 'select',
+                          return_value=([self.sock], [self.sock], [])), \
+                patch.object(utils, '_socket_write', side_effect=BrokenPipeError):
+            result = utils.docker_communicate(MagicMock(), stdin=b'input')
+        self.assertEqual(result, (b'out\n', b''))
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_connection_reset_preserves_output_and_closes_response(self):
+        frame = struct.pack('>BxxxL', 1, 4) + b'out\n'
+        with patch.object(utils, '_socket_read',
+                          side_effect=[frame, ConnectionResetError]):
+            result = utils.docker_communicate(MagicMock())
+        self.assertEqual(result, (b'out\n', b''))
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
