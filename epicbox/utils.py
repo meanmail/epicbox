@@ -153,6 +153,17 @@ def _socket_write(sock, data):
         raise e
 
 
+def _close_docker_socket(sock):
+    # Docker SDK retains the HTTP response on the borrowed attach socket.
+    # Close its buffered stream before the socket to avoid flushing a closed file.
+    try:
+        response = getattr(sock, '_response', None)
+        if response is not None:
+            response.close()
+    finally:
+        sock.close()
+
+
 def docker_communicate(container, stdin=None, start_container=True,
                        timeout=None):
     """
@@ -238,9 +249,9 @@ def docker_communicate(container, stdin=None, start_container=True,
             # Save CPU time
             time.sleep(0.05)
     else:
-        sock.close()
+        _close_docker_socket(sock)
         raise TimeoutError("Container didn't terminate after timeout seconds")
-    sock.close()
+    _close_docker_socket(sock)
     return demultiplex_docker_stream(stream_data)
 
 
