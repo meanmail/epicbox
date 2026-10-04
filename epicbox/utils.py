@@ -1,4 +1,5 @@
 import errno
+import math
 import os
 import select
 import signal
@@ -164,16 +165,22 @@ def docker_communicate(container, stdin=None, start_container=True,
                         container, or `None`, if no data should be sent.
     :param bool start_container: Whether to start the container after
                                  attaching to it.
-    :param int timeout: Time in seconds to wait for the container to terminate,
-        or `None` to make it unlimited.
+    :param int timeout: Positive finite time in seconds to wait for the
+        container to terminate. `None` uses config.DEFAULT_LIMITS['realtime'].
 
     :return: A tuple `(stdout, stderr)` of bytes objects.
 
     :raise TimeoutError: If the container does not terminate after `timeout`
                          seconds. The container is not killed automatically.
+    :raise ValueError: If the effective timeout is not positive and finite.
     :raise RequestException, DockerException, OSError: If an error occurred
         with the underlying docker system.
     """
+    if timeout is None:
+        timeout = config.DEFAULT_LIMITS['realtime']
+    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError('timeout must be a positive finite number')
+
     # Retry on 'No such container' since it may happen when the attach/start
     # is called immediately after the container is created.
     docker_client = get_docker_client(retry_status_forcelist=(404, 500))
@@ -200,15 +207,9 @@ def docker_communicate(container, stdin=None, start_container=True,
         log.info("Container started")
 
     stream_data = b''
-    start_time = time.monotonic()
-    while True:
-        wait_timeout = 1
-        if timeout is not None:
-            remaining = timeout - (time.monotonic() - start_time)
-            if remaining <= 0:
-                sock.close()
-                raise TimeoutError("Container didn't terminate after timeout seconds")
-            wait_timeout = min(wait_timeout, remaining)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        wait_timeout = min(1, max(0, deadline - time.monotonic()))
         writers = [sock] if stdin else []
         read_ready, write_ready, _ = select.select([sock], writers, [],
                                                  wait_timeout)
@@ -240,6 +241,9 @@ def docker_communicate(container, stdin=None, start_container=True,
                           "half of the socket.")
                 sock._sock.shutdown(socket.SHUT_WR)
 
+    else:
+        sock.close()
+        raise TimeoutError("Container didn't terminate after timeout seconds")
     sock.close()
     return demultiplex_docker_stream(stream_data)
 
