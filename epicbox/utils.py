@@ -200,12 +200,19 @@ def docker_communicate(container, stdin=None, start_container=True,
         log.info("Container started")
 
     stream_data = b''
-    start_time = time.time()
-    while timeout is None or time.time() - start_time < timeout:
-        read_ready, write_ready, _ = select.select([sock], [sock], [], 1)
-        is_io_active = False
+    start_time = time.monotonic()
+    while True:
+        wait_timeout = 1
+        if timeout is not None:
+            remaining = timeout - (time.monotonic() - start_time)
+            if remaining <= 0:
+                sock.close()
+                raise TimeoutError("Container didn't terminate after timeout seconds")
+            wait_timeout = min(wait_timeout, remaining)
+        writers = [sock] if stdin else []
+        read_ready, write_ready, _ = select.select([sock], writers, [],
+                                                 wait_timeout)
         if read_ready:
-            is_io_active = True
             try:
                 data = _socket_read(sock)
             except ConnectionResetError:
@@ -218,7 +225,6 @@ def docker_communicate(container, stdin=None, start_container=True,
             stream_data += data
 
         if write_ready and stdin:
-            is_io_active = True
             try:
                 written = _socket_write(sock, stdin)
             except BrokenPipeError:
@@ -234,12 +240,6 @@ def docker_communicate(container, stdin=None, start_container=True,
                           "half of the socket.")
                 sock._sock.shutdown(socket.SHUT_WR)
 
-        if not is_io_active:
-            # Save CPU time
-            time.sleep(0.05)
-    else:
-        sock.close()
-        raise TimeoutError("Container didn't terminate after timeout seconds")
     sock.close()
     return demultiplex_docker_stream(stream_data)
 
