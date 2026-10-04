@@ -85,7 +85,7 @@ class SocketWaitTests(unittest.TestCase):
         sock.close.assert_called_once_with()
 
     def test_invalid_timeout_is_rejected_before_attaching(self):
-        for timeout in [0, -1, float('inf'), float('-inf'), float('nan'), '5']:
+        for timeout in [-1, float('inf'), float('-inf'), float('nan'), '5']:
             with patch.object(utils, 'get_docker_client') as create_client:
                 with self.assertRaises(ValueError):
                     utils.docker_communicate(MagicMock(), timeout=timeout)

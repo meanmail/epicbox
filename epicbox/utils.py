@@ -165,21 +165,22 @@ def docker_communicate(container, stdin=None, start_container=True,
                         container, or `None`, if no data should be sent.
     :param bool start_container: Whether to start the container after
                                  attaching to it.
-    :param int timeout: Positive finite time in seconds to wait for the
+    :param int timeout: Nonnegative finite time in seconds to wait for the
         container to terminate. `None` uses config.DEFAULT_LIMITS['realtime'].
 
     :return: A tuple `(stdout, stderr)` of bytes objects.
 
     :raise TimeoutError: If the container does not terminate after `timeout`
                          seconds. The container is not killed automatically.
-    :raise ValueError: If the effective timeout is not positive and finite.
+    :raise ValueError: If the effective timeout is negative or not finite.
     :raise RequestException, DockerException, OSError: If an error occurred
         with the underlying docker system.
     """
     if timeout is None:
         timeout = config.DEFAULT_LIMITS['realtime']
-    if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError('timeout must be a positive finite number')
+    if (not isinstance(timeout, (int, float)) or
+            not math.isfinite(timeout) or timeout < 0):
+        raise ValueError('timeout must be a nonnegative finite number')
 
     # Retry on 'No such container' since it may happen when the attach/start
     # is called immediately after the container is created.
