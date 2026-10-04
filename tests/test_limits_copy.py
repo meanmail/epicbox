@@ -1,0 +1,51 @@
+import unittest
+from unittest.mock import patch
+
+from epicbox import config, utils
+
+
+class LimitsCopyTests(unittest.TestCase):
+    def test_partial_limits_do_not_mutate_input(self):
+        limits = {'cputime': 2, 'file_size': 1024}
+        result = utils.merge_limits_defaults(limits)
+        self.assertEqual(limits, {'cputime': 2, 'file_size': 1024})
+        self.assertEqual(result['file_size'], 1024)
+        self.assertEqual(result['realtime'], 2 * config.CPU_TO_REAL_TIME_FACTOR)
+
+    def test_reused_limits_recalculate_realtime(self):
+        limits = {'cputime': 1}
+        first = utils.merge_limits_defaults(limits)
+        limits['cputime'] = 2
+        second = utils.merge_limits_defaults(limits)
+        self.assertEqual(first['cputime'], 1)
+        self.assertEqual(second['realtime'], 2 * config.CPU_TO_REAL_TIME_FACTOR)
+
+    def test_empty_limits_return_independent_defaults(self):
+        for limits in (None, {}):
+            result = utils.merge_limits_defaults(limits)
+            self.assertEqual(result, config.DEFAULT_LIMITS)
+            self.assertIsNot(result, config.DEFAULT_LIMITS)
+            result['memory'] = 12345
+            self.assertNotEqual(config.DEFAULT_LIMITS['memory'], 12345)
+
+    def test_explicit_realtime_is_preserved(self):
+        limits = {'cputime': 2, 'realtime': 3}
+        result = utils.merge_limits_defaults(limits)
+        self.assertEqual(result['realtime'], 3)
+        self.assertEqual(limits, {'cputime': 2, 'realtime': 3})
+
+    def test_empty_limits_preserve_configured_realtime_default(self):
+        with patch.dict(config.DEFAULT_LIMITS, {'cputime': 1, 'realtime': 100}):
+            self.assertEqual(utils.merge_limits_defaults({})['realtime'], 100)
+
+
+def test_reused_limits_on_real_containers(profile):
+    from epicbox import sandboxes
+    limits = {'cputime': 1}
+    with sandboxes.create(profile.name, limits=limits) as first:
+        assert first.realtime_limit == config.CPU_TO_REAL_TIME_FACTOR
+        limits['cputime'] = 2
+        with sandboxes.create(profile.name, limits=limits) as second:
+            assert second.realtime_limit == 2 * config.CPU_TO_REAL_TIME_FACTOR
+            assert limits == {'cputime': 2}
+            assert first.realtime_limit == config.CPU_TO_REAL_TIME_FACTOR
