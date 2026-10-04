@@ -5,7 +5,7 @@ import signal
 import socket
 import struct
 import time
-from contextlib import closing
+from contextlib import contextmanager
 
 import dateutil.parser
 import docker
@@ -154,6 +154,21 @@ def _socket_write(sock, data):
         raise e
 
 
+@contextmanager
+def _closing_socket(sock):
+    try:
+        yield sock
+    except BaseException:
+        try:
+            sock.close()
+        except Exception:
+            logger.exception("Failed to close attached socket after "
+                             "communication error")
+        raise
+    else:
+        sock.close()
+
+
 def _socket_shutdown_write(sock):
     """Close stdin, tolerating a peer that has already disconnected."""
     try:
@@ -199,7 +214,7 @@ def docker_communicate(container, stdin=None, start_container=True,
         'logs': 0,
     }
     sock = docker_client.api.attach_socket(container.id, params=params)
-    with closing(sock):
+    with _closing_socket(sock):
         sock._sock.setblocking(False)  # Make socket non-blocking
         log.info("Attached to the container", params=params, fd=sock.fileno(),
                  timeout=timeout)

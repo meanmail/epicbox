@@ -97,6 +97,17 @@ class DockerCommunicateShutdownTests(unittest.TestCase):
         self.assertEqual(result, (b'out\n', b'err\n'))
         self.sock.close.assert_called_once_with()
 
+    def test_close_error_preserves_start_error(self):
+        error = DockerException('Start failed')
+        self.container.start.side_effect = error
+        self.sock.close.side_effect = OSError(errno.EIO, 'Close failed')
+
+        with self.assertRaises(DockerException) as raised:
+            utils.docker_communicate(self.container)
+
+        self.assertIs(raised.exception, error)
+        self.sock.close.assert_called_once_with()
+
 
 class DisconnectedSocketTests(unittest.TestCase):
     def test_closed_peer_preserves_buffered_docker_output(self):
