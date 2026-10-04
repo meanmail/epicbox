@@ -39,6 +39,32 @@ class LimitsCopyTests(unittest.TestCase):
             self.assertEqual(utils.merge_limits_defaults({})['realtime'], 100)
 
 
+    def test_unlimited_cputime_derives_unlimited_realtime(self):
+        limits = {'cputime': None}
+        result = utils.merge_limits_defaults(limits)
+        self.assertIsNone(result['realtime'])
+        self.assertEqual(limits, {'cputime': None})
+        self.assertIsNone(utils.create_ulimits(result))
+
+    def test_unlimited_cputime_preserves_explicit_realtime(self):
+        limits = {'cputime': None, 'realtime': 3}
+        result = utils.merge_limits_defaults(limits)
+        self.assertEqual(result['realtime'], 3)
+        self.assertEqual(limits, {'cputime': None, 'realtime': 3})
+
+    def test_reused_limits_can_switch_to_and_from_unlimited(self):
+        limits = {'cputime': None}
+        unlimited = utils.merge_limits_defaults(limits)
+        limits['cputime'] = 2
+        finite = utils.merge_limits_defaults(limits)
+        limits['cputime'] = None
+        unlimited_again = utils.merge_limits_defaults(limits)
+        self.assertIsNone(unlimited['realtime'])
+        self.assertEqual(finite['realtime'], 2 * config.CPU_TO_REAL_TIME_FACTOR)
+        self.assertIsNone(unlimited_again['realtime'])
+        self.assertEqual(limits, {'cputime': None})
+
+
 def test_reused_limits_on_real_containers(profile):
     from epicbox import sandboxes
     limits = {'cputime': 1}
@@ -49,3 +75,16 @@ def test_reused_limits_on_real_containers(profile):
             assert second.realtime_limit == 2 * config.CPU_TO_REAL_TIME_FACTOR
             assert limits == {'cputime': 2}
             assert first.realtime_limit == config.CPU_TO_REAL_TIME_FACTOR
+
+
+def test_unlimited_cputime_on_real_containers(profile):
+    from epicbox import sandboxes
+    for limits in ({'cputime': None}, {'cputime': None, 'realtime': 3}):
+        with sandboxes.create(profile.name, command='true',
+                              limits=limits) as sandbox:
+            assert sandbox.realtime_limit == limits.get('realtime')
+            ulimits = sandbox.container.attrs['HostConfig'].get('Ulimits') or []
+            assert not any(limit['Name'] == 'cpu' for limit in ulimits)
+            result = sandboxes.start(sandbox)
+            assert result['exit_code'] == 0
+            assert result['timeout'] is False
