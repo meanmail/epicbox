@@ -39,10 +39,10 @@ class LimitsCopyTests(unittest.TestCase):
             self.assertEqual(utils.merge_limits_defaults({})['realtime'], 100)
 
 
-    def test_unlimited_cputime_derives_unlimited_realtime(self):
+    def test_unlimited_cputime_preserves_default_realtime(self):
         limits = {'cputime': None}
         result = utils.merge_limits_defaults(limits)
-        self.assertIsNone(result['realtime'])
+        self.assertEqual(result['realtime'], config.DEFAULT_LIMITS['realtime'])
         self.assertEqual(limits, {'cputime': None})
         self.assertIsNone(utils.create_ulimits(result))
 
@@ -59,9 +59,10 @@ class LimitsCopyTests(unittest.TestCase):
         finite = utils.merge_limits_defaults(limits)
         limits['cputime'] = None
         unlimited_again = utils.merge_limits_defaults(limits)
-        self.assertIsNone(unlimited['realtime'])
+        self.assertEqual(unlimited['realtime'], config.DEFAULT_LIMITS['realtime'])
         self.assertEqual(finite['realtime'], 2 * config.CPU_TO_REAL_TIME_FACTOR)
-        self.assertIsNone(unlimited_again['realtime'])
+        self.assertEqual(unlimited_again['realtime'],
+                         config.DEFAULT_LIMITS['realtime'])
         self.assertEqual(limits, {'cputime': None})
 
 
@@ -82,7 +83,8 @@ def test_unlimited_cputime_on_real_containers(profile):
     for limits in ({'cputime': None}, {'cputime': None, 'realtime': 3}):
         with sandboxes.create(profile.name, command='true',
                               limits=limits) as sandbox:
-            assert sandbox.realtime_limit == limits.get('realtime')
+            assert sandbox.realtime_limit == limits.get(
+                'realtime', config.DEFAULT_LIMITS['realtime'])
             ulimits = sandbox.container.attrs['HostConfig'].get('Ulimits') or []
             assert not any(limit['Name'] == 'cpu' for limit in ulimits)
             result = sandboxes.start(sandbox)

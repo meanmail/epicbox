@@ -256,10 +256,8 @@ def merge_limits_defaults(limits):
     for limit_name, default_value in config.DEFAULT_LIMITS.items():
         if limit_name not in limits:
             limits[limit_name] = default_value
-    if not is_realtime_specified:
-        cputime = limits['cputime']
-        limits['realtime'] = (cputime * config.CPU_TO_REAL_TIME_FACTOR
-                              if cputime is not None else None)
+    if not is_realtime_specified and limits['cputime'] is not None:
+        limits['realtime'] = limits['cputime'] * config.CPU_TO_REAL_TIME_FACTOR
     return limits
 
 
