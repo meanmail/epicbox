@@ -5,6 +5,7 @@ import signal
 import socket
 import struct
 import time
+from contextlib import contextmanager
 
 import dateutil.parser
 import docker
@@ -164,6 +165,21 @@ def _close_docker_socket(sock):
         sock.close()
 
 
+@contextmanager
+def _closing_docker_socket(sock):
+    try:
+        yield sock
+    except BaseException:
+        try:
+            _close_docker_socket(sock)
+        except Exception:
+            logger.exception("Failed to close attached socket after "
+                             "communication error")
+        raise
+    else:
+        _close_docker_socket(sock)
+
+
 def docker_communicate(container, stdin=None, start_container=True,
                        timeout=None):
     """
@@ -199,60 +215,60 @@ def docker_communicate(container, stdin=None, start_container=True,
         'logs': 0,
     }
     sock = docker_client.api.attach_socket(container.id, params=params)
-    sock._sock.setblocking(False)  # Make socket non-blocking
-    log.info("Attached to the container", params=params, fd=sock.fileno(),
-             timeout=timeout)
-    if not stdin:
-        log.debug("There is no input data. Shut down the write half "
-                  "of the socket.")
-        sock._sock.shutdown(socket.SHUT_WR)
-    if start_container:
-        container.start()
-        log.info("Container started")
+    with _closing_docker_socket(sock):
+        sock._sock.setblocking(False)  # Make socket non-blocking
+        log.info("Attached to the container", params=params, fd=sock.fileno(),
+                 timeout=timeout)
+        if not stdin:
+            log.debug("There is no input data. Shut down the write half "
+                      "of the socket.")
+            sock._sock.shutdown(socket.SHUT_WR)
+        if start_container:
+            container.start()
+            log.info("Container started")
 
-    stream_data = b''
-    start_time = time.time()
-    while timeout is None or time.time() - start_time < timeout:
-        read_ready, write_ready, _ = select.select([sock], [sock], [], 1)
-        is_io_active = False
-        if read_ready:
-            is_io_active = True
-            try:
-                data = _socket_read(sock)
-            except ConnectionResetError:
-                log.warning("Connection reset caught on reading the container "
-                            "output stream. Break communication")
-                break
-            if data is None:
-                log.debug("Container output reached EOF. Closing the socket")
-                break
-            stream_data += data
+        stream_data = b''
+        start_time = time.time()
+        while timeout is None or time.time() - start_time < timeout:
+            read_ready, write_ready, _ = select.select([sock], [sock], [], 1)
+            is_io_active = False
+            if read_ready:
+                is_io_active = True
+                try:
+                    data = _socket_read(sock)
+                except ConnectionResetError:
+                    log.warning("Connection reset caught on reading the container "
+                                "output stream. Break communication")
+                    break
+                if data is None:
+                    log.debug("Container output reached EOF. Closing the socket")
+                    break
+                stream_data += data
 
-        if write_ready and stdin:
-            is_io_active = True
-            try:
-                written = _socket_write(sock, stdin)
-            except BrokenPipeError:
-                # Broken pipe may happen when a container terminates quickly
-                # (e.g. OOM Killer) and docker manages to close the socket
-                # almost immediately before we're trying to write to stdin.
-                log.warning("Broken pipe caught on writing to stdin. Break "
-                            "communication")
-                break
-            stdin = stdin[written:]
-            if not stdin:
-                log.debug("All input data has been sent. Shut down the write "
-                          "half of the socket.")
-                sock._sock.shutdown(socket.SHUT_WR)
+            if write_ready and stdin:
+                is_io_active = True
+                try:
+                    written = _socket_write(sock, stdin)
+                except BrokenPipeError:
+                    # Broken pipe may happen when a container terminates quickly
+                    # (e.g. OOM Killer) and docker manages to close the socket
+                    # almost immediately before we're trying to write to stdin.
+                    log.warning("Broken pipe caught on writing to stdin. Break "
+                                "communication")
+                    break
+                stdin = stdin[written:]
+                if not stdin:
+                    log.debug("All input data has been sent. Shut down the write "
+                              "half of the socket.")
+                    sock._sock.shutdown(socket.SHUT_WR)
 
-        if not is_io_active:
-            # Save CPU time
-            time.sleep(0.05)
-    else:
-        _close_docker_socket(sock)
-        raise TimeoutError("Container didn't terminate after timeout seconds")
-    _close_docker_socket(sock)
-    return demultiplex_docker_stream(stream_data)
+            if not is_io_active:
+                # Save CPU time
+                time.sleep(0.05)
+        else:
+            raise TimeoutError("Container didn't terminate after timeout seconds")
+        return demultiplex_docker_stream(stream_data)
+
 
 
 def filter_filenames(files):

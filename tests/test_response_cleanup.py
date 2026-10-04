@@ -50,16 +50,16 @@ class DockerResponseCleanupTests(unittest.TestCase):
 
         self.assertEqual(result, (b'out\n', b''))
         self.assertTrue(self.sock.closed)
-        self.response.close()
         self.assertTrue(self.http_response.closed)
+        self.response.close()
 
     def test_timeout_closes_http_response_before_socket(self):
         with self.assertRaises(TimeoutError):
             utils.docker_communicate(MagicMock(), timeout=0)
 
         self.assertTrue(self.sock.closed)
-        self.response.close()
         self.assertTrue(self.http_response.closed)
+        self.response.close()
 
     def test_response_close_error_still_closes_socket(self):
         error = RuntimeError('Response close failed')
@@ -76,4 +76,48 @@ class DockerResponseCleanupTests(unittest.TestCase):
         result = utils.docker_communicate(MagicMock())
 
         self.assertEqual(result, (b'out\n', b''))
+        self.assertTrue(self.sock.closed)
+
+    def test_start_error_closes_response(self):
+        error = RuntimeError('Start failed')
+        container = MagicMock()
+        container.start.side_effect = error
+
+        with self.assertRaises(RuntimeError) as raised:
+            utils.docker_communicate(container)
+
+        self.assertIs(raised.exception, error)
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_read_error_closes_response(self):
+        error = OSError('Read failed')
+        with patch.object(utils, '_socket_read', side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                utils.docker_communicate(MagicMock())
+
+        self.assertIs(raised.exception, error)
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_select_error_closes_response(self):
+        error = OSError('Select failed')
+        with patch.object(utils.select, 'select', side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                utils.docker_communicate(MagicMock())
+
+        self.assertIs(raised.exception, error)
+        self.assertTrue(self.http_response.closed)
+        self.assertTrue(self.sock.closed)
+
+    def test_cleanup_error_preserves_start_error(self):
+        error = RuntimeError('Start failed')
+        container = MagicMock()
+        container.start.side_effect = error
+        with patch.object(self.response, 'close',
+                          side_effect=ValueError('Response close failed')):
+            with self.assertRaises(RuntimeError) as raised:
+                utils.docker_communicate(container)
+
+        self.assertIs(raised.exception, error)
         self.assertTrue(self.sock.closed)
